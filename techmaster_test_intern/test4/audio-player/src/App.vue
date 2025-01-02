@@ -139,26 +139,39 @@ export default {
     try {
       // Đọc file subtitles
       const subtitlesResponse = await fetch('../../../../output/output_AB.txt');
+      if (!subtitlesResponse.ok) {
+        throw new Error('Failed to load subtitles');
+      }
       const subtitlesText = await subtitlesResponse.text();
+      console.log('Subtitles loaded:', subtitlesText); // Debug
+
       this.subtitles = subtitlesText.split('\n')
         .filter(line => line.trim())
         .map(line => ({
-          speaker: line.charAt(0),
-          text: line.substring(3)
+          speaker: line[0], // Lấy ký tự đầu tiên (A hoặc B)
+          text: line.slice(2).trim() // Bỏ qua "A:" hoặc "B:" và khoảng trắng
         }));
+      console.log('Parsed subtitles:', this.subtitles); // Debug
 
       // Đọc file timestamps
       const timestampsResponse = await fetch('../../../../output/timestamp.txt');
-      const timestampsText = await timestampsResponse.text();
-      this.timestamps = timestampsText.split('\n')
-        .filter(line => line.trim())
-        .map(line => {
-          const [time, duration, index, length] = line.split(',').map(Number);
-          return { time, duration, index, length };
-        });
-    } catch (error) {
-      console.error('Error loading files:', error);
-    }
+        if (!timestampsResponse.ok) {
+          throw new Error('Failed to load timestamps');
+        }
+        const timestampsText = await timestampsResponse.text();
+        console.log('Timestamps loaded:', timestampsText); // Debug
+
+        this.timestamps = timestampsText.split('\n')
+          .filter(line => line.trim())
+          .map(line => {
+            const [time, duration, index, length] = line.split(',').map(Number);
+            return { time, duration, index, length };
+          });
+        console.log('Parsed timestamps:', this.timestamps); // Debug
+
+      } catch (error) {
+        console.error('Error loading files:', error);
+      }
   },
   methods: {
     togglePlay() {
