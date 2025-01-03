@@ -28,13 +28,13 @@
               <!-- Text Content -->
               <div class="flex-1">
                 <Badge 
-                  :value="line.speaker === 'A' ? 'Lan' : 'James'"
+                  :value="line.speaker === 'A' ? 'James' : 'Lan'"
                   :severity="line.speaker === 'A' ? 'info' : 'warning'"
                   class="mb-2"
                 />
                 <p 
                   class="text-lg leading-relaxed"
-                  :class="line.speaker === 'A' ? 'text-blue-800' : 'text-pink-800'"
+                  :class="line.speaker === 'A' ? 'text-blue-800' : 'text-pink-600'"
                 >
                   <span v-html="getHighlightedText(line.text, index)"></span>
                 </p>
@@ -74,7 +74,7 @@
               @loadedmetadata="onLoadedMetadata"
               class="hidden"
             >
-              <source src="../../../../input/audio.opus" type="audio/ogg">
+            <source :src="`${apiBaseUrl}/audio`" type="audio/ogg">
             </audio>
           </div>
         </template>
@@ -127,6 +127,7 @@ export default {
   },
   data() {
     return {
+      apiBaseUrl: 'http://localhost:3000/api',
       subtitles: [],
       timestamps: [],
       currentTime: 0,
@@ -138,40 +139,36 @@ export default {
   async mounted() {
     try {
       // Đọc file subtitles
-      const subtitlesResponse = await fetch('../../../../output/output_AB.txt');
+      const subtitlesResponse = await fetch(`${this.apiBaseUrl}/subtitles`);
       if (!subtitlesResponse.ok) {
         throw new Error('Failed to load subtitles');
       }
       const subtitlesText = await subtitlesResponse.text();
-      console.log('Subtitles loaded:', subtitlesText); // Debug
-
+      
       this.subtitles = subtitlesText.split('\n')
         .filter(line => line.trim())
         .map(line => ({
-          speaker: line[0], // Lấy ký tự đầu tiên (A hoặc B)
-          text: line.slice(2).trim() // Bỏ qua "A:" hoặc "B:" và khoảng trắng
+          speaker: line[0],
+          text: line.slice(2).trim()
         }));
-      console.log('Parsed subtitles:', this.subtitles); // Debug
 
       // Đọc file timestamps
-      const timestampsResponse = await fetch('../../../../output/timestamp.txt');
-        if (!timestampsResponse.ok) {
-          throw new Error('Failed to load timestamps');
-        }
-        const timestampsText = await timestampsResponse.text();
-        console.log('Timestamps loaded:', timestampsText); // Debug
-
-        this.timestamps = timestampsText.split('\n')
-          .filter(line => line.trim())
-          .map(line => {
-            const [time, duration, index, length] = line.split(',').map(Number);
-            return { time, duration, index, length };
-          });
-        console.log('Parsed timestamps:', this.timestamps); // Debug
-
-      } catch (error) {
-        console.error('Error loading files:', error);
+      const timestampsResponse = await fetch(`${this.apiBaseUrl}/timestamps`);
+      if (!timestampsResponse.ok) {
+        throw new Error('Failed to load timestamps');
       }
+      const timestampsText = await timestampsResponse.text();
+
+      this.timestamps = timestampsText.split('\n')
+        .filter(line => line.trim())
+        .map(line => {
+          const [time, duration, index, length] = line.split(',').map(Number);
+          return { time, duration, index, length };
+        });
+
+    } catch (error) {
+      console.error('Error loading files:', error);
+    }
   },
   methods: {
     togglePlay() {
@@ -200,12 +197,26 @@ export default {
         this.currentTime >= t.time && 
         this.currentTime <= (t.time + t.duration)
       );
+      
+      // Thêm log để debug
+      console.log('Current time:', this.currentTime);
+      console.log('Found timestamp:', timestamp);
+      
       this.currentHighlight = timestamp;
     },
+
     getHighlightedText(text, lineIndex) {
       if (!this.currentHighlight) return text;
       
       const highlight = this.currentHighlight;
+      
+      // Thêm log để debug
+      console.log('Highlighting:', {
+        text,
+        start: highlight.index,
+        length: highlight.length
+      });
+      
       const start = highlight.index;
       const end = start + highlight.length;
 
