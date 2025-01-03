@@ -13,19 +13,17 @@
           <!-- Conversation -->
           <div class="space-y-4 mb-8">
             <div 
-              v-for="(line, index) in subtitles" 
-              :key="index"
+              v-for="(line, lineIndex) in subtitleLines" 
+              :key="lineIndex"
               class="flex items-start gap-3 p-3 rounded-lg transition-all"
               :class="line.speaker === 'A' ? 'bg-blue-50' : 'bg-pink-50'"
             >
-              <!-- Avatar -->
               <Avatar 
                 :icon="line.speaker === 'A' ? 'pi pi-user' : 'pi pi-users'"
                 :class="line.speaker === 'A' ? 'bg-primary' : 'bg-secondary'"
                 shape="circle"
               />
               
-              <!-- Text Content -->
               <div class="flex-1">
                 <Badge 
                   :value="line.speaker === 'A' ? 'James' : 'Lan'"
@@ -35,16 +33,14 @@
                 <p 
                   class="text-lg leading-relaxed"
                   :class="line.speaker === 'A' ? 'text-blue-800' : 'text-pink-600'"
-                >
-                  <span v-html="getHighlightedText(line.text, index)"></span>
-                </p>
+                  v-html="getHighlightedText(line.text, lineIndex)"
+                ></p>
               </div>
             </div>
           </div>
 
           <!-- Audio Controls -->
           <div class="bg-white p-4 rounded-lg shadow-sm">
-            <!-- Play/Stop Button -->
             <div class="flex items-center gap-4 mb-4">
               <Button 
                 @click="togglePlay"
@@ -58,7 +54,6 @@
               </span>
             </div>
 
-            <!-- Progress Slider -->
             <Slider
               v-model="currentTime"
               :min="0"
@@ -67,14 +62,13 @@
               class="w-full"
             />
 
-            <!-- Hidden Audio -->
             <audio 
               ref="audioPlayer" 
               @timeupdate="onTimeUpdate"
               @loadedmetadata="onLoadedMetadata"
               class="hidden"
             >
-            <source :src="`${apiBaseUrl}/audio`" type="audio/ogg">
+              <source :src="`${apiBaseUrl}/audio`" type="audio/ogg">
             </audio>
           </div>
         </template>
@@ -116,6 +110,9 @@ import Slider from 'primevue/slider'
 import Avatar from 'primevue/avatar'
 import Badge from 'primevue/badge'
 
+const SILENCE_THRESHOLD = 500 // ms - ngưỡng cho khoảng im lặng
+const WORD_GAP_THRESHOLD = 300 // ms - ngưỡng cho khoảng cách giữa các từ
+
 export default {
   name: 'App',
   components: {
@@ -128,8 +125,9 @@ export default {
   data() {
     return {
       apiBaseUrl: 'http://localhost:3000/api',
-      subtitles: [],
+      subtitleLines: [],
       timestamps: [],
+      words: [],
       currentTime: 0,
       duration: 0,
       isPlaying: false,
@@ -138,100 +136,164 @@ export default {
   },
   async mounted() {
     try {
-      // Đọc file subtitles
-      const subtitlesResponse = await fetch(`${this.apiBaseUrl}/subtitles`);
-      if (!subtitlesResponse.ok) {
-        throw new Error('Failed to load subtitles');
-      }
-      const subtitlesText = await subtitlesResponse.text();
+      // Đọc subtitles
+      const subtitlesResponse = await fetch(`${this.apiBaseUrl}/subtitles`)
+      if (!subtitlesResponse.ok) throw new Error('Failed to load subtitles')
+      const subtitlesText = await subtitlesResponse.text()
       
-      this.subtitles = subtitlesText.split('\n')
+      // Xử lý subtitles
+      this.subtitleLines = subtitlesText.split('\n')
         .filter(line => line.trim())
         .map(line => ({
           speaker: line[0],
-          text: line.slice(2).trim()
-        }));
+          text: line.slice(3).trim()
+        }))
 
-      // Đọc file timestamps
-      const timestampsResponse = await fetch(`${this.apiBaseUrl}/timestamps`);
-      if (!timestampsResponse.ok) {
-        throw new Error('Failed to load timestamps');
-      }
-      const timestampsText = await timestampsResponse.text();
+      // Tạo mảng words và tính toán vị trí
+      let wordIndex = 0
+      this.words = []
+      
+      this.subtitleLines.forEach((line, lineIndex) => {
+        const words = line.text.split(/\s+/)
+        words.forEach(word => {
+          this.words.push({
+            text: word,
+            lineIndex,
+            index: wordIndex++
+          })
+        })
+      })
 
-      this.timestamps = timestampsText.split('\n')
+      // Đọc timestamps
+      const timestampsResponse = await fetch(`${this.apiBaseUrl}/timestamps`)
+      if (!timestampsResponse.ok) throw new Error('Failed to load timestamps')
+      const timestampsText = await timestampsResponse.text()
+      
+      // Debug log
+      console.log('Raw timestamps:', timestampsText)
+      
+      // Xử lý timestamps
+      let lastEndTime = 0
+      const allTimestamps = timestampsText.split('\n')
         .filter(line => line.trim())
-        .map(line => {
-          const [time, duration, index, length] = line.split(',').map(Number);
-          return { time, duration, index, length };
-        });
+        .map((line, index) => {
+          const [time, duration] = line.split(',').map(Number)
+          const word = this.words[index % this.words.length]
+          
+          if (!word) return null
+
+          // Kiểm tra khoảng dừng
+          const isPause = time - lastEndTime > 500 // 500ms là ngưỡng pause
+          lastEndTime = time + duration
+
+          return {
+            time,
+            duration,
+            text: word.text,
+            lineIndex: word.lineIndex,
+            index: word.index,
+            endTime: time + duration,
+            isPause
+          }
+        })
+        .filter(t => t !== null)
+
+      // Sắp xếp timestamps theo thời gian
+      this.timestamps = allTimestamps.sort((a, b) => a.time - b.time)
 
     } catch (error) {
-      console.error('Error loading files:', error);
+      console.error('Initialization error:', error)
     }
   },
   methods: {
-    togglePlay() {
-      const audio = this.$refs.audioPlayer;
-      if (this.isPlaying) {
-        audio.pause();
-      } else {
-        audio.play();
-      }
-      this.isPlaying = !this.isPlaying;
-    },
-    onTimeUpdate(event) {
-      this.currentTime = event.target.currentTime * 1000;
-      this.updateHighlight();
-    },
-    onLoadedMetadata(event) {
-      this.duration = event.target.duration * 1000;
-    },
-    onSliderChange() {
-      const audio = this.$refs.audioPlayer;
-      audio.currentTime = this.currentTime / 1000;
-      this.updateHighlight();
-    },
     updateHighlight() {
-      const timestamp = this.timestamps.find(t => 
-        this.currentTime >= t.time && 
-        this.currentTime <= (t.time + t.duration)
-      );
+      const currentMs = this.currentTime
       
-      // Thêm log để debug
-      console.log('Current time:', this.currentTime);
-      console.log('Found timestamp:', timestamp);
-      
-      this.currentHighlight = timestamp;
+      // Tìm từ hiện tại dựa trên timestamps
+      const currentWord = this.timestamps.find((timestamp, index) => {
+        // Lấy timestamp tiếp theo để xác định khoảng thời gian giữa các từ
+        const nextTimestamp = this.timestamps[index + 1]
+        
+        // Kiểm tra xem thời gian hiện tại có nằm trong khoảng của từ này
+        // hoặc trong khoảng giữa từ này và từ tiếp theo
+        if (nextTimestamp) {
+          return currentMs >= timestamp.time && currentMs < nextTimestamp.time
+        } else {
+          // Nếu là từ cuối cùng
+          return currentMs >= timestamp.time && 
+                currentMs < (timestamp.time + timestamp.duration)
+        }
+      })
+
+      // Chỉ cập nhật khi có từ mới
+      if (currentWord?.text !== this.currentHighlight?.text) {
+        this.currentHighlight = currentWord
+        
+        if (currentWord) {
+          console.log('Current highlight:', {
+            time: currentMs,
+            text: currentWord.text,
+            lineIndex: currentWord.lineIndex,
+            duration: currentWord.duration,
+            wordStart: currentWord.time,
+            wordEnd: currentWord.time + currentWord.duration
+          })
+        }
+      }
+    },
+
+    onTimeUpdate(event) {
+      this.currentTime = Math.round(event.target.currentTime * 1000)
+      this.updateHighlight()
+    },
+
+    beforeDestroy() {
+      if (this._rafId) {
+        cancelAnimationFrame(this._rafId)
+      }
     },
 
     getHighlightedText(text, lineIndex) {
-      if (!this.currentHighlight) return text;
-      
-      const highlight = this.currentHighlight;
-      
-      // Thêm log để debug
-      console.log('Highlighting:', {
-        text,
-        start: highlight.index,
-        length: highlight.length
-      });
-      
-      const start = highlight.index;
-      const end = start + highlight.length;
+      if (!this.currentHighlight || this.currentHighlight.lineIndex !== lineIndex) {
+        return text
+      }
 
-      return text.split('').map((char, index) => {
-        if (index >= start && index < end) {
-          return `<span class="bg-yellow-300 transition-colors duration-200">${char}</span>`;
-        }
-        return char;
-      }).join('');
+      const words = text.split(/\s+/)
+      return words.map(word => 
+        word === this.currentHighlight.text ? 
+          `<mark class="highlight-text">${word}</mark>` : 
+          word
+      ).join(' ')
     },
+
+    onLoadedMetadata(event) {
+      this.duration = Math.floor(event.target.duration * 1000)
+      console.log('Audio duration:', this.duration)
+    },
+
+    onSliderChange() {
+      const audio = this.$refs.audioPlayer
+      audio.currentTime = this.currentTime / 1000
+      this.updateHighlight()
+    },
+
+    togglePlay() {
+      const audio = this.$refs.audioPlayer
+      if (this.isPlaying) {
+        audio.pause()
+      } else {
+        audio.play().catch(error => {
+          console.error('Error playing audio:', error)
+        })
+      }
+      this.isPlaying = !this.isPlaying
+    },
+
     formatTime(ms) {
-      const seconds = Math.floor(ms / 1000);
-      const minutes = Math.floor(seconds / 60);
-      const remainingSeconds = seconds % 60;
-      return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`;
+      const seconds = Math.floor(ms / 1000)
+      const minutes = Math.floor(seconds / 60)
+      const remainingSeconds = seconds % 60
+      return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`
     }
   }
 }
@@ -273,12 +335,15 @@ export default {
 }
 
 .highlight-text {
-  background-color: #FFF176;
+  background-color: #fef08a;
+  padding: 2px 4px;
+  border-radius: 2px;
   transition: background-color 0.3s ease;
 }
 
-/* Smooth transitions */
-.transition-all {
-  transition: all 0.3s ease;
+@keyframes highlight-pulse {
+  0% { background-color: #fef08a; }
+  50% { background-color: #fde047; }
+  100% { background-color: #fef08a; }
 }
 </style>
